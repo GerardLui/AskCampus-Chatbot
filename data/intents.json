@@ -942,7 +942,7 @@
         "how long will be the vacation"
       ],
       "responses": [
-        "Academic calender is given to you by your class-soordinators after you join your respective classes"
+        "Academic calender is given to you by your class-coordinators after you join your respective classes"
       ],
       "extension": {
         "function": "",
@@ -1057,10 +1057,14 @@
         "antiragging facility",
         "ragging juniors",
         "ragging history",
-        "ragging incidents"
+        "ragging incidents",
+        "bullying",
+        "bully",
+        "harass",
+        "harrassment"
       ],
       "responses": [
-        "We are Proud to tell you that our college provides ragging free environment, and we have strict rules against ragging"
+        "We are Proud to tell you that our college provides bully or harassment free environment, and we have strict rules against ragging or any identical sort of harassment"
       ],
       "extension": {
         "function": "",
