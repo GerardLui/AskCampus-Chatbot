@@ -82,10 +82,90 @@ FALLBACK_RESPONSE = (
 print(f"Model ready: {len(model.classes_)} intents, {X.shape[1]} vocabulary terms.")
 
 
-# --- 4. Inference ------------------------------------------------------------
+# --- 4. Multi-turn fee flow --------------------------------------------------
+# Single-user, in-memory conversation state (fine for a local single-session
+# demo; would need per-session keys for a multi-user deployment).
+CONVO_STATE = {"awaiting_course_for_fees": False}
+
+COURSE_FEES = {
+    "computer science": {"tuition_per_unit": 1350, "laboratory": 4000, "misc": 3000, "classroom": 1000, "id_fee": 150},
+    "information technology": {"tuition_per_unit": 1300, "laboratory": 3800, "misc": 3000, "classroom": 1000, "id_fee": 150},
+    "information system": {"tuition_per_unit": 1250, "laboratory": 3200, "misc": 3000, "classroom": 1000, "id_fee": 150},
+}
+COURSE_ALIASES = {
+    "computer science": "computer science", "cs": "computer science",
+    "information technology": "information technology", "it": "information technology",
+    "information system": "information system", "is": "information system",
+}
+STANDARD_LOAD_UNITS = 21
+
+
+def match_course(message):
+    text = message.lower().strip()
+    words = text.split()
+
+    # Full course names can match anywhere in the message -- unambiguous.
+    for full_name in ("computer science", "information technology", "information system"):
+        if re.search(rf"\b{re.escape(full_name)}\b", text):
+            return COURSE_ALIASES[full_name]
+
+    # Short codes ("cs", "it", "is") collide with common English words
+    # ("it", "is"), so only trust them when the message is short -- i.e.
+    # actually looks like a direct answer, not an unrelated sentence.
+    if len(words) <= 3:
+        for code in ("cs", "it", "is"):
+            if re.search(rf"\b{re.escape(code)}\b", text):
+                return COURSE_ALIASES[code]
+
+    return None
+
+
+def build_fee_breakdown(course):
+    fees = COURSE_FEES[course]
+    tuition_total = fees["tuition_per_unit"] * STANDARD_LOAD_UNITS
+    grand_total = tuition_total + fees["laboratory"] + fees["misc"] + fees["classroom"] + fees["id_fee"]
+    return (
+        f"Here's a generic fee breakdown for {course.title()} (based on a standard {STANDARD_LOAD_UNITS}-unit load):\n"
+        f"- Tuition: PHP {fees['tuition_per_unit']:,}/unit x {STANDARD_LOAD_UNITS} units = PHP {tuition_total:,}\n"
+        f"- Laboratory Fee: PHP {fees['laboratory']:,}\n"
+        f"- Miscellaneous Fee: PHP {fees['misc']:,}\n"
+        f"- Classroom/Facilities Fee: PHP {fees['classroom']:,}\n"
+        f"- ID Fee: PHP {fees['id_fee']:,}\n"
+        f"Estimated Total: PHP {grand_total:,}\n\n"
+        f"(These are generic sample figures for this demo -- actual fees are published each semester by the Finance Office.)"
+    )
+
+
+# --- 5. Inference ------------------------------------------------------------
 def predict(message):
     if not message or not message.strip():
         return FALLBACK_RESPONSE, "none", 0.0
+
+    # If we're mid-conversation waiting for a course name, try that first --
+    # but don't get stuck: if the message clearly asks something else instead,
+    # drop the pending question and answer normally.
+    if CONVO_STATE["awaiting_course_for_fees"]:
+        course = match_course(message)
+        if course:
+            CONVO_STATE["awaiting_course_for_fees"] = False
+            return build_fee_breakdown(course), "fees_detail", 1.0
+
+        cleaned = preprocess_text(message)
+        features = vectorizer.transform([cleaned])
+        probs = model.predict_proba(features)[0]
+        top_idx = np.argmax(probs)
+        confidence = float(probs[top_idx])
+        intent = model.classes_[top_idx]
+        if confidence >= CONFIDENCE_THRESHOLD and intent != "fees":
+            CONVO_STATE["awaiting_course_for_fees"] = False
+            # fall through to normal handling below
+        else:
+            return (
+                "Sorry, I didn't catch the program -- please say Computer Science, "
+                "Information Technology, or Information System.",
+                "fees_clarify",
+                confidence,
+            )
 
     cleaned = preprocess_text(message)
     features = vectorizer.transform([cleaned])
@@ -96,6 +176,9 @@ def predict(message):
 
     if confidence < CONFIDENCE_THRESHOLD:
         return FALLBACK_RESPONSE, "fallback", confidence
+
+    if intent == "fees":
+        CONVO_STATE["awaiting_course_for_fees"] = True
 
     candidates = response_bank.get(intent) or [FALLBACK_RESPONSE]
     reply = random.choice(candidates)
