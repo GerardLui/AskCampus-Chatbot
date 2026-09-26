@@ -2,6 +2,7 @@ import json
 import re
 import random
 import string
+import difflib
 
 import numpy as np
 import pandas as pd
@@ -107,8 +108,31 @@ COURSE_ALIASES = {
 }
 STANDARD_LOAD_UNITS = 21
 
+# Keywords used only for typo-tolerant fuzzy matching (not exact matching).
+COURSE_KEYWORDS = {
+    "computer science": ["computer", "science"],
+    "information technology": ["information", "technology"],
+    "information system": ["information", "system"],
+}
 
-def match_course(message):
+
+def fuzzy_match_course(message):
+    """Catch minor typos (e.g. 'compute4r science') by comparing each word
+    against known course keywords by similarity instead of exact match."""
+    words = re.sub(r"[^a-z0-9\s]", " ", message.lower()).split()
+    best_course, best_score = None, 0.0
+    for course, keywords in COURSE_KEYWORDS.items():
+        hits = sum(
+            1 for kw in keywords
+            if any(difflib.SequenceMatcher(None, w, kw).ratio() >= 0.8 for w in words)
+        )
+        score = hits / len(keywords)
+        if score > best_score:
+            best_score, best_course = score, course
+    return best_course if best_score >= 0.5 else None
+
+
+def match_course(message, relaxed=False):
     text = message.lower().strip()
     words = text.split()
 
@@ -119,14 +143,23 @@ def match_course(message):
                 return COURSE_ALIASES[alias]
 
     # Bare 2-letter codes ("cs", "it", "is") collide with common English
-    # words ("it", "is"), so only trust them when the message is short --
-    # i.e. actually looks like a direct answer, not an unrelated sentence.
-    if len(words) <= 3:
+    # words ("it", "is"). When `relaxed=True` (only used when the message
+    # was ALREADY confidently classified as being about fees), trust them
+    # anywhere -- e.g. "what are the fees for IT" is unambiguous in that
+    # context. Otherwise, only trust a code when it's the ENTIRE message --
+    # a genuine direct answer like "IT" -- not just a short sentence, since
+    # fees mode is sticky and can persist across many turns; a later
+    # unrelated question like "is scholarship available" must not collide
+    # with the course code "IS" just because it's short.
+    if relaxed:
         for code in ("cs", "it", "is"):
             if re.search(rf"\b{re.escape(code)}\b", text):
                 return COURSE_ALIASES[code]
+    elif len(words) == 1 and words[0] in ("cs", "it", "is"):
+        return COURSE_ALIASES[words[0]]
 
-    return None
+    # Last resort: typo-tolerant fuzzy match against full course names.
+    return fuzzy_match_course(message)
 
 
 def build_fee_breakdown(course):
@@ -148,18 +181,22 @@ def build_fee_breakdown(course):
 
 FOLLOWUP_INTENTS = {"admission", "scholarship", "dormitory", "placement", "document"}
 YES_WORDS = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "opo", "oo"}
-NO_WORDS = {"no", "nope", "nah", "no thanks", "im good", "i'm good", "wala", "hindi"}
+NO_SINGLE_WORDS = {"no", "nope", "nah", "wala", "hindi"}
+NO_PHRASES = {"no thanks", "im good", "i'm good"}
 AWAITING_FOLLOWUP = {"active": False}
 
 
 def is_yes(text):
-    t = text.lower().strip()
-    return t in YES_WORDS or any(w in t.split() for w in YES_WORDS)
+    words = re.findall(r"[a-z']+", text.lower())
+    return len(words) <= 3 and any(w in YES_WORDS for w in words)
 
 
 def is_no(text):
     t = text.lower().strip()
-    return t in NO_WORDS or any(w in t for w in NO_WORDS)
+    if t in NO_PHRASES:
+        return True
+    words = re.findall(r"[a-z']+", t)
+    return len(words) <= 3 and any(w in NO_SINGLE_WORDS for w in words)
 
 
 # --- 5. Inference ------------------------------------------------------------
@@ -212,6 +249,13 @@ def predict(message):
 
     if intent == "fees":
         LAST_TOPIC["topic"] = "fees"
+        # They may have already named their course in this same message
+        # ("what are the fees for computer science?") -- don't make them
+        # repeat it.
+        course = match_course(message, relaxed=True)
+        if course:
+            AWAITING_FOLLOWUP["active"] = True
+            return build_fee_breakdown(course), "fees_detail", confidence
     else:
         # A clearly different, confident topic ends the fees conversation.
         LAST_TOPIC["topic"] = intent

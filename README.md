@@ -11,7 +11,8 @@ Built for our Programming Languages / CS Elective final project.
 - NLP preprocessing pipeline: tokenization, lowercasing, punctuation removal, lemmatization (NLTK)
 - Confidence-threshold fallback so the bot says "I'm not sure" instead of guessing wildly
 - Multi-turn context: fee questions stay "sticky" across turns (ask about IT, then later just say "CS" or "comsci" -- it keeps giving fee breakdowns without losing the thread)
-- Light conversational follow-ups: after answering something substantial (admission, scholarship, dormitory, placement), the bot invites a follow-up and handles a simple yes/no reply naturally, without turning into open-ended chit-chat
+- Typo-tolerant course matching: minor misspellings like "compute4r science" or "infromation technology" still resolve correctly
+- Light conversational follow-ups: after answering something substantial (admission, scholarship, dormitory, placement, document requirements), the bot invites a follow-up and handles a simple yes/no reply naturally, without turning into open-ended chit-chat
 - Full evaluation: accuracy, precision, recall, F1-score, confusion matrix, error analysis
 - Live chat demo backed by a local Flask API serving the **actual trained model**
   (no reimplementation of the classifier in JavaScript — the browser talks to the
@@ -77,9 +78,9 @@ it's connected, and you can chat with the real model directly.
 
 | Metric | Score |
 |---|---|
-| Accuracy | 77.3% |
+| Accuracy | 76.8% |
 | Precision | ~82% |
-| Recall | 77.3% |
+| Recall | 76.8% |
 | F1-score | ~76% |
 
 > Note: an earlier draft of this dataset scored higher (~88%) with more but
@@ -100,25 +101,43 @@ sync rather than being separate implementations:
   independently-trained model hiding in JavaScript.
 
 ## Dataset
-`data/intents.json` contains 36 intents and ~374 sample student queries, each
+`data/intents.json` contains 38 intents and ~409 sample student queries, each
 paired with response templates, scoped to AskCampus's three actual programs
 (Computer Science, Information Technology, Information System). Both the
 notebook and the backend train directly on this file, so there's a single
 source of truth for training data across evaluation and deployment.
+
+New intents added for broader coverage:
+- `document_request` -- requesting copies of already-submitted records
+  (Transcript of Records, Certificate of Enrollment, Good Moral Certificate,
+  Diploma, Honorable Dismissal) via the Registrar's Office.
+- `office_location` -- where student-facing offices are on campus, and
+  where to submit/pass documents.
 
 Content notes:
 - Fee questions are handled as a short back-and-forth: the bot asks which
   program you're in, then gives a generic PHP-based tuition/fee breakdown
   for that program. This context is "sticky" -- once you're talking about
   fees, later messages like "comsci" or "what about CS" still resolve
-  correctly, until you clearly ask about something else.
-- After answering admission, scholarship, dormitory, or placement questions,
-  the bot invites a follow-up ("anything else you'd like to know?") and
-  handles a plain yes/no reply -- a small conversational touch, kept
-  deliberately narrow so it doesn't become open-ended chit-chat.
+  correctly, until you clearly ask about something else. Minor typos in
+  course names (e.g. "compute4r science") are handled via fuzzy string
+  matching (`difflib`), separate from the ML classifier itself.
+- After answering admission, scholarship, dormitory, document, or placement
+  questions, the bot invites a follow-up ("anything else you'd like to
+  know?") and handles a plain yes/no reply -- a small conversational touch,
+  kept deliberately narrow so it doesn't become open-ended chit-chat.
 - "Hostel" was renamed to "Dormitory" to match AskCampus's actual housing
   setup (a separate building primarily for student-athletes and long-distance
   commuters).
 - Several placeholder responses from the original template dataset (fake
   links, "XYZ" names, an irrelevant department, a broken external link) were
   replaced with real or clearly-marked-generic AskCampus content.
+
+**A note on broadening vocabulary going forward:** adding more real
+phrasings/synonyms to `intents.json` is the right way to teach the model
+new ways of asking about *existing* topics, or to add whole new topics
+(as done above). It is *not* the right tool for typos -- a TF-IDF model
+only recognizes words it's seen exactly, so a misspelling is invisible to
+it regardless of how many patterns you add. Typo tolerance instead needs a
+fuzzy-matching layer (like the one added for course names above), which is
+a separate, small piece of logic rather than more training data.

@@ -16,7 +16,7 @@
       ],
       "responses": [
         "Hello!",
-        "Good to see you again!",
+        "Good to see you!",
         "Hi there, how can I help?"
       ],
       "extension": {
@@ -88,7 +88,7 @@
         "who designed you"
       ],
       "responses": [
-        "College students"
+        "College students, Gerard Lui Anastacio and Kyle Paras, made me to help students with their college-related queries."
       ],
       "extension": {
         "function": "",
@@ -121,10 +121,10 @@
         "what are you"
       ],
       "responses": [
-        "You can call me Mind Reader.",
-        "I'm Mind Reader",
-        "I am a Chatbot.",
-        "I am your helper"
+        "You can call me AskCampus!.",
+        "I'm AskCampus! Your assistant for your university needs!",
+        "I am AskCampus. Designed to help you with your college-related queries.",
+        "I am AskCampus, designed to make you campus life easier!"
       ],
       "extension": {
         "function": "",
@@ -158,7 +158,10 @@
         "when should i attend college",
         "what is my college time",
         "college timing",
-        "timing college"
+        "timing college",
+        "hours",
+        "open hours",
+        "college hours"
       ],
       "responses": [
         "College is open 8am-5pm Monday-Saturday!"
@@ -196,7 +199,7 @@
         "call"
       ],
       "responses": [
-        "You can contact at: NUMBER"
+        "You can contact AskCampus admissions at +63 000 000 0000 or email admissions@askcampus.edu"
       ],
       "extension": {
         "function": "",
@@ -306,7 +309,7 @@
         "location"
       ],
       "responses": [
-        "<a target=\"_blank\" href=\"ADD YOU GOOGLE MAP LINK HERE\"> here</a>"
+        "AskCampus is located along  100 Saan-Saan Road, Brgy. Bahala Na, Laguna -- For students residing within Calamba, the university provides a free minibus shuttle that departs from the city proper at 5:45 AM. For those commuting from outside Calamba, the campus is easily accessible via public transit; the nearest bus and jeepney stop is located near Brgy. Turbina, just a 5-minute walk from the campus gates."
       ],
       "extension": {
         "function": "",
@@ -405,7 +408,7 @@
         "documents needed"
       ],
       "responses": [
-        "To know more about document required visit <a target=\"_blank\" href=\"ADD LINK OF ADMISSION GUIDANCE DOCUMENT FROM YOUR UNIVERSITY WEBSITE\"> here</a>"
+        "For admission, you will generally need your Form 137/138 or transcript of records, a valid ID, and 2x2 ID photos, submitted to the Admissions Office. Requirements can vary slightly for transferees -- check with the Admissions Office for your specific case."
       ],
       "extension": {
         "function": "",
@@ -721,10 +724,15 @@
         "how do i enroll",
         "how to enroll",
         "enrollment process",
-        "want to enroll"
+        "want to enroll",
+        "requirements",
+        "admission requirements",
+        "what are the requirements",
+        "requirements for admission",
+        "what requirements do i need"
       ],
       "responses": [
-        "You can review the full admission process and requirements at https://www.askcampus.edu/admissions (sample link for this demo -- replace with your real admissions page)."
+        "To apply, prepare your requirements (such as your Form 137/138 or transcript of records, a valid ID, and 2x2 photos) and submit them to the Admissions Office within the enrollment period. You can review the full admission process and requirements at https://www.askcampus.edu/admissions (sample link for this demo -- replace with your real admissions page)."
       ],
       "extension": {
         "function": "",
@@ -1100,6 +1108,76 @@
       "context": {
         "in": "",
         "out": "HODName",
+        "clear": true
+      },
+      "entityType": "NA",
+      "entities": []
+    },
+    {
+      "intent": "document_request",
+      "text": [
+        "how do i get my transcript of records",
+        "request a copy of my documents",
+        "how to request transcript of records",
+        "i want a copy of my diploma",
+        "how do i get a certificate of enrollment",
+        "request good moral certificate",
+        "how to get honorable dismissal",
+        "where do i request my tor",
+        "requesting documents",
+        "document request",
+        "how to claim my documents",
+        "how long does document request take",
+        "request tor",
+        "i need my records",
+        "how to get a copy of my grades",
+        "request certificate of enrollment"
+      ],
+      "responses": [
+        "You can request official documents -- Transcript of Records, Certificate of Enrollment, Good Moral Certificate, Diploma, or Honorable Dismissal -- through the Registrar's Office. Processing usually takes 3-5 working days. Bring a valid ID and your request slip when claiming."
+      ],
+      "extension": {
+        "function": "",
+        "entities": false,
+        "responses": []
+      },
+      "context": {
+        "in": "",
+        "out": "DocumentRequest",
+        "clear": true
+      },
+      "entityType": "NA",
+      "entities": []
+    },
+    {
+      "intent": "office_location",
+      "text": [
+        "where is the registrar office",
+        "where is the admissions office",
+        "where is the finance office",
+        "where is the cashier",
+        "where do i submit my documents",
+        "where do i pass this document",
+        "where do i submit my requirements",
+        "location of the registrar",
+        "where is the student affairs office",
+        "office locations",
+        "where are the offices located",
+        "where do i pass my requirements",
+        "where do i go to submit documents",
+        "where is the cashiers office"
+      ],
+      "responses": [
+        "Most student-facing offices -- Registrar, Admissions, Finance/Cashier, and Student Affairs -- are on the ground floor of the main building, near the main lobby. For document submissions specifically, head to the Registrar's Office."
+      ],
+      "extension": {
+        "function": "",
+        "entities": false,
+        "responses": []
+      },
+      "context": {
+        "in": "",
+        "out": "OfficeLocation",
         "clear": true
       },
       "entityType": "NA",
