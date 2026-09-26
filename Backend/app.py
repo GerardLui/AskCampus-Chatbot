@@ -85,7 +85,12 @@ print(f"Model ready: {len(model.classes_)} intents, {X.shape[1]} vocabulary term
 # --- 4. Multi-turn fee flow --------------------------------------------------
 # Single-user, in-memory conversation state (fine for a local single-session
 # demo; would need per-session keys for a multi-user deployment).
-CONVO_STATE = {"awaiting_course_for_fees": False}
+#
+# "Sticky" by design: once the conversation is about fees, it STAYS about
+# fees across multiple turns (so "IT", then later "what about CS", then
+# later "comsci" all keep working) until the user clearly asks about
+# something else entirely.
+LAST_TOPIC = {"topic": None}
 
 COURSE_FEES = {
     "computer science": {"tuition_per_unit": 1350, "laboratory": 4000, "misc": 3000, "classroom": 1000, "id_fee": 150},
@@ -93,9 +98,12 @@ COURSE_FEES = {
     "information system": {"tuition_per_unit": 1250, "laboratory": 3200, "misc": 3000, "classroom": 1000, "id_fee": 150},
 }
 COURSE_ALIASES = {
-    "computer science": "computer science", "cs": "computer science",
-    "information technology": "information technology", "it": "information technology",
-    "information system": "information system", "is": "information system",
+    "computer science": "computer science", "computerscience": "computer science",
+    "compsci": "computer science", "comsci": "computer science", "cs": "computer science",
+    "information technology": "information technology", "infotech": "information technology",
+    "info tech": "information technology", "it": "information technology",
+    "information system": "information system", "information systems": "information system",
+    "info system": "information system", "infosystem": "information system", "is": "information system",
 }
 STANDARD_LOAD_UNITS = 21
 
@@ -104,14 +112,15 @@ def match_course(message):
     text = message.lower().strip()
     words = text.split()
 
-    # Full course names can match anywhere in the message -- unambiguous.
-    for full_name in ("computer science", "information technology", "information system"):
-        if re.search(rf"\b{re.escape(full_name)}\b", text):
-            return COURSE_ALIASES[full_name]
+    # Multi-word / unambiguous names and abbreviations can match anywhere.
+    for alias in sorted(COURSE_ALIASES, key=len, reverse=True):
+        if len(alias) > 2:  # everything except the bare "cs"/"it"/"is" codes
+            if re.search(rf"\b{re.escape(alias)}\b", text):
+                return COURSE_ALIASES[alias]
 
-    # Short codes ("cs", "it", "is") collide with common English words
-    # ("it", "is"), so only trust them when the message is short -- i.e.
-    # actually looks like a direct answer, not an unrelated sentence.
+    # Bare 2-letter codes ("cs", "it", "is") collide with common English
+    # words ("it", "is"), so only trust them when the message is short --
+    # i.e. actually looks like a direct answer, not an unrelated sentence.
     if len(words) <= 3:
         for code in ("cs", "it", "is"):
             if re.search(rf"\b{re.escape(code)}\b", text):
@@ -132,8 +141,25 @@ def build_fee_breakdown(course):
         f"- Classroom/Facilities Fee: PHP {fees['classroom']:,}\n"
         f"- ID Fee: PHP {fees['id_fee']:,}\n"
         f"Estimated Total: PHP {grand_total:,}\n\n"
+        f"Want the breakdown for another program too? Just say Computer Science, IT, or IS.\n"
         f"(These are generic sample figures for this demo -- actual fees are published each semester by the Finance Office.)"
     )
+
+
+FOLLOWUP_INTENTS = {"admission", "scholarship", "dormitory", "placement", "document"}
+YES_WORDS = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "opo", "oo"}
+NO_WORDS = {"no", "nope", "nah", "no thanks", "im good", "i'm good", "wala", "hindi"}
+AWAITING_FOLLOWUP = {"active": False}
+
+
+def is_yes(text):
+    t = text.lower().strip()
+    return t in YES_WORDS or any(w in t.split() for w in YES_WORDS)
+
+
+def is_no(text):
+    t = text.lower().strip()
+    return t in NO_WORDS or any(w in t for w in NO_WORDS)
 
 
 # --- 5. Inference ------------------------------------------------------------
@@ -141,31 +167,31 @@ def predict(message):
     if not message or not message.strip():
         return FALLBACK_RESPONSE, "none", 0.0
 
-    # If we're mid-conversation waiting for a course name, try that first --
-    # but don't get stuck: if the message clearly asks something else instead,
-    # drop the pending question and answer normally.
-    if CONVO_STATE["awaiting_course_for_fees"]:
+    # Handle a simple yes/no reply to our own "anything else?" invite, then
+    # get out of the way -- this should never block a genuine new question.
+    if AWAITING_FOLLOWUP["active"]:
+        if is_yes(message):
+            AWAITING_FOLLOWUP["active"] = False
+            return (
+                "Sure! What would you like to know next -- courses, fees, "
+                "library, dormitories, admission, or scholarships?",
+                "followup_yes",
+                1.0,
+            )
+        if is_no(message):
+            AWAITING_FOLLOWUP["active"] = False
+            return ("Glad I could help! Feel free to ask anytime.", "followup_no", 1.0)
+        AWAITING_FOLLOWUP["active"] = False  # treat anything else as a fresh question
+
+    # If a course name/code appears in the message AND we're still in a fees
+    # conversation (however many turns ago it started), answer directly and
+    # stay in fees mode -- this is what makes "IT" then later "comsci" both
+    # keep working without re-asking about fees from scratch.
+    if LAST_TOPIC["topic"] == "fees":
         course = match_course(message)
         if course:
-            CONVO_STATE["awaiting_course_for_fees"] = False
+            AWAITING_FOLLOWUP["active"] = True
             return build_fee_breakdown(course), "fees_detail", 1.0
-
-        cleaned = preprocess_text(message)
-        features = vectorizer.transform([cleaned])
-        probs = model.predict_proba(features)[0]
-        top_idx = np.argmax(probs)
-        confidence = float(probs[top_idx])
-        intent = model.classes_[top_idx]
-        if confidence >= CONFIDENCE_THRESHOLD and intent != "fees":
-            CONVO_STATE["awaiting_course_for_fees"] = False
-            # fall through to normal handling below
-        else:
-            return (
-                "Sorry, I didn't catch the program -- please say Computer Science, "
-                "Information Technology, or Information System.",
-                "fees_clarify",
-                confidence,
-            )
 
     cleaned = preprocess_text(message)
     features = vectorizer.transform([cleaned])
@@ -175,13 +201,28 @@ def predict(message):
     intent = model.classes_[top_idx]
 
     if confidence < CONFIDENCE_THRESHOLD:
+        if LAST_TOPIC["topic"] == "fees":
+            return (
+                "Sorry, I didn't catch the program -- please say Computer Science, "
+                "Information Technology, or Information System.",
+                "fees_clarify",
+                confidence,
+            )
         return FALLBACK_RESPONSE, "fallback", confidence
 
     if intent == "fees":
-        CONVO_STATE["awaiting_course_for_fees"] = True
+        LAST_TOPIC["topic"] = "fees"
+    else:
+        # A clearly different, confident topic ends the fees conversation.
+        LAST_TOPIC["topic"] = intent
 
     candidates = response_bank.get(intent) or [FALLBACK_RESPONSE]
     reply = random.choice(candidates)
+
+    if intent in FOLLOWUP_INTENTS:
+        reply = reply + " Is there anything else you'd like to know?"
+        AWAITING_FOLLOWUP["active"] = True
+
     return reply, intent, confidence
 
 

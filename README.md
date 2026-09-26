@@ -10,7 +10,8 @@ Built for our Programming Languages / CS Elective final project.
 - Intent classification using TF-IDF + Linear SVM (scikit-learn)
 - NLP preprocessing pipeline: tokenization, lowercasing, punctuation removal, lemmatization (NLTK)
 - Confidence-threshold fallback so the bot says "I'm not sure" instead of guessing wildly
-- Basic multi-turn context: asking about fees prompts a follow-up ("which program?") and the bot remembers you're mid-conversation
+- Multi-turn context: fee questions stay "sticky" across turns (ask about IT, then later just say "CS" or "comsci" -- it keeps giving fee breakdowns without losing the thread)
+- Light conversational follow-ups: after answering something substantial (admission, scholarship, dormitory, placement), the bot invites a follow-up and handles a simple yes/no reply naturally, without turning into open-ended chit-chat
 - Full evaluation: accuracy, precision, recall, F1-score, confusion matrix, error analysis
 - Live chat demo backed by a local Flask API serving the **actual trained model**
   (no reimplementation of the classifier in JavaScript — the browser talks to the
@@ -76,10 +77,10 @@ it's connected, and you can chat with the real model directly.
 
 | Metric | Score |
 |---|---|
-| Accuracy | 75.7% |
-| Precision | 81.9% |
-| Recall | 75.7% |
-| F1-score | 75.5% |
+| Accuracy | 77.3% |
+| Precision | ~82% |
+| Recall | 77.3% |
+| F1-score | ~76% |
 
 > Note: an earlier draft of this dataset scored higher (~88%) with more but
 > lower-quality data (irrelevant course branches, broken placeholder links,
@@ -99,7 +100,7 @@ sync rather than being separate implementations:
   independently-trained model hiding in JavaScript.
 
 ## Dataset
-`data/intents.json` contains 36 intents and ~367 sample student queries, each
+`data/intents.json` contains 36 intents and ~374 sample student queries, each
 paired with response templates, scoped to AskCampus's three actual programs
 (Computer Science, Information Technology, Information System). Both the
 notebook and the backend train directly on this file, so there's a single
@@ -108,7 +109,13 @@ source of truth for training data across evaluation and deployment.
 Content notes:
 - Fee questions are handled as a short back-and-forth: the bot asks which
   program you're in, then gives a generic PHP-based tuition/fee breakdown
-  for that program (backend-side logic in `app.py`, not a static response).
+  for that program. This context is "sticky" -- once you're talking about
+  fees, later messages like "comsci" or "what about CS" still resolve
+  correctly, until you clearly ask about something else.
+- After answering admission, scholarship, dormitory, or placement questions,
+  the bot invites a follow-up ("anything else you'd like to know?") and
+  handles a plain yes/no reply -- a small conversational touch, kept
+  deliberately narrow so it doesn't become open-ended chit-chat.
 - "Hostel" was renamed to "Dormitory" to match AskCampus's actual housing
   setup (a separate building primarily for student-athletes and long-distance
   commuters).

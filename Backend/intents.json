@@ -714,7 +714,14 @@
         "How to take admission in your college",
         "What is the process for admission",
         "admission",
-        "admission process"
+        "admission process",
+        "enroll",
+        "enrolling",
+        "enrollment",
+        "how do i enroll",
+        "how to enroll",
+        "enrollment process",
+        "want to enroll"
       ],
       "responses": [
         "You can review the full admission process and requirements at https://www.askcampus.edu/admissions (sample link for this demo -- replace with your real admissions page)."
@@ -1057,14 +1064,10 @@
         "antiragging facility",
         "ragging juniors",
         "ragging history",
-        "ragging incidents",
-        "bully",
-        "bullying",
-        "harass",
-        "harrassment"
+        "ragging incidents"
       ],
       "responses": [
-        "We are Proud to tell you that our college provides bully or harassment free environment, and we have strict rules against ragging or any identical sort of harassment"
+        "We are Proud to tell you that our college provides ragging free environment, and we have strict rules against ragging"
       ],
       "extension": {
         "function": "",
