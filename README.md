@@ -91,14 +91,20 @@ it's connected, and you can chat with the real model directly.
 > held-out split.
 
 ## Architecture Note
-There are two places this model "runs," and they're intentionally kept in
-sync rather than being separate implementations:
-- **Notebook**: trains and evaluates the model on an 80/20 split, producing
-  the metrics above.
-- **Backend (`backend/app.py`)**: trains the same pipeline on the full
-  dataset (more coverage for real use) and exposes it via a `/predict`
-  endpoint. The web UI calls this directly — there is no second,
-  independently-trained model hiding in JavaScript.
+There is exactly **one** trained model, not a separate copy per environment:
+
+1. The notebook trains and evaluates the model (80/20 split, plus k-fold
+   cross-validation for a fairer estimate -- see below), then retrains a
+   final version on 100% of the data and exports it with `joblib` to
+   `vectorizer.joblib` and `model.joblib`.
+2. `backend/app.py` **loads those exact files** on startup -- it does not
+   retrain anything. The live chat demo is running the literal trained
+   object that was evaluated in the notebook, not a separately-trained
+   stand-in.
+
+If you change `data/intents.json`, re-run the notebook (including the
+export cell near the end) and copy the two new `.joblib` files into
+`backend/` to keep the deployed model in sync.
 
 ## Dataset
 `data/intents.json` contains 38 intents and ~409 sample student queries, each

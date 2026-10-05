@@ -4,18 +4,14 @@ import random
 import string
 import difflib
 
+import joblib
 import numpy as np
-import pandas as pd
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 
 import nltk
 from nltk.stem import WordNetLemmatizer
 from nltk.tokenize import word_tokenize
-
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.svm import LinearSVC
-from sklearn.calibration import CalibratedClassifierCV
 
 # --- One-time NLTK setup ----------------------------------------------------
 for pkg in ["punkt", "punkt_tab", "wordnet", "omw-1.4"]:
@@ -30,23 +26,18 @@ random.seed(RANDOM_STATE)
 np.random.seed(RANDOM_STATE)
 
 
-# --- 1. Load intents.json (same forgiving parser as the notebook) ----------
+# --- 1. Load response text from intents.json (replies only -- NOT retrained
+#        from here; the model itself comes from the files below) ----------
 with open("intents.json", "r", encoding="utf-8") as f:
     raw_data = json.load(f)
 
-rows = []
 response_bank = {}
 for entry in raw_data["intents"]:
     intent_name = entry.get("intent")
     patterns = entry.get("text")
-    responses = entry.get("responses", [])
     if not intent_name or not patterns:
         continue
-    response_bank[intent_name] = responses
-    for pattern in patterns:
-        rows.append({"query": pattern, "intent": intent_name})
-
-df = pd.DataFrame(rows)
+    response_bank[intent_name] = entry.get("responses", [])
 
 
 # --- 2. Preprocessing -- identical logic to the notebook -------------------
@@ -59,20 +50,18 @@ def preprocess_text(text):
     return " ".join(lemmas)
 
 
-df["clean_query"] = df["query"].apply(preprocess_text)
-
-
-# --- 3. Feature extraction + model (trained on ALL data for deployment) ---
-vectorizer = TfidfVectorizer(ngram_range=(1, 2), min_df=1)
-X = vectorizer.fit_transform(df["clean_query"])
-y = df["intent"]
-
-min_class_count = y.value_counts().min()
-safe_cv = max(2, min(3, min_class_count))
-
-base_svc = LinearSVC(random_state=RANDOM_STATE, max_iter=10000)
-model = CalibratedClassifierCV(base_svc, cv=safe_cv)
-model.fit(X, y)
+# --- 3. Load the ACTUAL trained model + vectorizer from the notebook -------
+# These files are produced by the notebook's "Exporting the Final Model for
+# Deployment" cell. This is the same trained object the notebook evaluated,
+# not a separately-retrained copy -- there is exactly one model.
+try:
+    vectorizer = joblib.load("vectorizer.joblib")
+    model = joblib.load("model.joblib")
+except FileNotFoundError as e:
+    raise SystemExit(
+        "Missing vectorizer.joblib / model.joblib. Run the notebook's export "
+        "cell and copy both files into this backend/ folder first."
+    ) from e
 
 CONFIDENCE_THRESHOLD = 0.35
 FALLBACK_RESPONSE = (
@@ -80,7 +69,7 @@ FALLBACK_RESPONSE = (
     "Could you rephrase your question, or contact the relevant office directly?"
 )
 
-print(f"Model ready: {len(model.classes_)} intents, {X.shape[1]} vocabulary terms.")
+print(f"Model loaded: {len(model.classes_)} intents, {len(vectorizer.vocabulary_)} vocabulary terms.")
 
 
 # --- 4. Multi-turn fee flow --------------------------------------------------
