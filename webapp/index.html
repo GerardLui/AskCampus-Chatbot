@@ -38,6 +38,25 @@
     background:var(--paper);
     flex-shrink:0;
   }
+  .header-row{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    gap:12px;
+  }
+  .ghost-btn{
+    border:1px solid var(--line);
+    background:var(--paper-raised);
+    color:var(--maroon-deep);
+    padding:7px 14px;
+    border-radius:999px;
+    font-family:'Inter',sans-serif;
+    font-size:13px;
+    font-weight:500;
+    cursor:pointer;
+    flex-shrink:0;
+  }
+  .ghost-btn:hover{ border-color:var(--maroon); }
   .wordmark{
     font-family:'Lora',serif;
     font-weight:600;
@@ -208,8 +227,13 @@
 <body>
 
 <header>
-  <p class="wordmark">Ask<span>Campus</span></p>
-  <p class="tagline"><span class="status-dot" id="statusDot"></span><span id="statusText">Checking backend...</span></p>
+  <div class="header-row">
+    <div>
+      <p class="wordmark">Ask<span>Campus</span></p>
+      <p class="tagline"><span class="status-dot" id="statusDot"></span><span id="statusText">Checking backend...</span></p>
+    </div>
+    <button id="newChatBtn" class="ghost-btn" title="Start a fresh conversation">New chat</button>
+  </div>
 </header>
 
 <main id="chatMain">
@@ -234,6 +258,37 @@ const BACKEND_URL = "http://127.0.0.1:5000";
 // =============================
 
 let connectionReady = false;
+
+// Each browser tab gets its own conversation ID, sent with every message so
+// the backend can keep a separate AskCampusSession per user instead of one
+// global state shared by everyone.
+function newSessionId(){
+  return (crypto.randomUUID ? crypto.randomUUID()
+          : Date.now().toString(36) + Math.random().toString(36).slice(2));
+}
+let sessionId;
+try {
+  sessionId = sessionStorage.getItem('askcampus_session') || newSessionId();
+  sessionStorage.setItem('askcampus_session', sessionId);
+} catch (e) {
+  sessionId = newSessionId();
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Builds the small line under each bot reply: intent, confidence, and
+// whether the ML model or the context layer produced the answer.
+function buildMeta({ intent, confidence, handled_by }){
+  const label = intent ? escapeHtml(intent) : 'not sure (fallback)';
+  let html = `<span class="intent-tag">${label}</span>`;
+  if (confidence !== undefined && confidence !== null) {
+    html += ` &middot; confidence ${Number(confidence).toFixed(2)}`;
+  }
+  if (handled_by) html += ` &middot; ${escapeHtml(handled_by)}`;
+  return html;
+}
 
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
@@ -319,7 +374,7 @@ async function connectToModel(){
     statusDot.className = 'status-dot online';
     statusText.textContent = 'Backend connected';
     const greeting = await callModel("hello");
-    addMessage(toPlainText(greeting.reply), 'bot', `<span class="intent-tag">${greeting.intent}</span>`);
+    addMessage(toPlainText(greeting.reply), 'bot', buildMeta(greeting));
   } catch (err) {
     console.error('Connection failed:', err);
     statusDot.className = 'status-dot offline';
@@ -335,7 +390,7 @@ async function callModel(message){
   const res = await fetch(`${BACKEND_URL}/predict`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message })
+    body: JSON.stringify({ message, session_id: sessionId })
   });
   if(!res.ok) throw new Error('Prediction request failed');
   return await res.json();
@@ -356,10 +411,9 @@ async function handleSend(){
   addTyping();
 
   try {
-    const { reply, intent, confidence } = await callModel(text);
+    const data = await callModel(text);
     removeTyping();
-    const metaHtml = `<span class="intent-tag">${intent}</span> &middot; confidence ${Number(confidence).toFixed(2)}`;
-    addMessage(toPlainText(reply), 'bot', metaHtml);
+    addMessage(toPlainText(data.reply), 'bot', buildMeta(data));
   } catch (err) {
     console.error('Prediction failed:', err);
     removeTyping();
@@ -380,6 +434,13 @@ userInput.addEventListener('keydown', (e) => {
 userInput.addEventListener('input', () => {
   userInput.style.height = 'auto';
   userInput.style.height = Math.min(userInput.scrollHeight, 120) + 'px';
+});
+
+document.getElementById('newChatBtn').addEventListener('click', () => {
+  sessionId = newSessionId();
+  try { sessionStorage.setItem('askcampus_session', sessionId); } catch (e) {}
+  chatCol.innerHTML = '';
+  connectToModel();
 });
 
 renderChips();
