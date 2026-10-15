@@ -1,19 +1,22 @@
 """
-askcampus_dialogue.py -- AskCampus conversation logic, shared by the
-notebook (run_cli_chatbot) and the Flask backend (app.py).
+askcampus_dialogue.py
 
-The ML model (TF-IDF + calibrated LinearSVC) makes every intent decision.
-This module adds what a single-message classifier cannot see on its own:
+Conversation logic for AskCampus. Both the notebook chat and the Flask
+backend (app.py) import this file, so they always behave the same way.
 
-  * Course entity extraction -- aliases, safe handling of the 2-letter codes
-    "cs"/"it"/"is", and difflib fuzzy matching for typos.
-  * Sticky fees context -- after a fees question, naming a program returns
-    that program's fee breakdown until the topic clearly changes.
-  * Same-message handling -- "what are the fees for computer science?"
-  * A yes/no follow-up after admission/scholarship/dorm/placement/document.
+The trained classifier (TF-IDF + calibrated LinearSVC) decides the intent of
+every message. This file only adds the things a one-message-at-a-time
+classifier cannot handle by itself:
 
-All conversation state lives in a ConversationState object, so every user
-gets their own conversation (no module-level globals).
+  * Recognizing which program a student means: full names, nicknames like
+    "comsci", the short codes CS / IT / IS, and small typos.
+  * Remembering that we are talking about fees, so a follow-up like "IT"
+    returns the IT fee breakdown instead of being treated as a new question.
+  * Answering "what are the fees for computer science?" in one step.
+  * Handling a simple yes/no after the bot asks "anything else?".
+
+Each user gets their own ConversationState, so two people chatting at the
+same time never share memory.
 """
 
 import re
@@ -29,6 +32,7 @@ from nltk.tokenize import word_tokenize
 
 _lemmatizer = WordNetLemmatizer()
 
+# Below this confidence the bot asks the student to rephrase instead of guessing.
 CONFIDENCE_THRESHOLD = 0.35
 FALLBACK_RESPONSE = (
     "I'm sorry, I'm not confident I understood that correctly. "
@@ -37,10 +41,13 @@ FALLBACK_RESPONSE = (
 
 
 # ---------------------------------------------------------------------------
-# Preprocessing -- must stay identical to the notebook's training pipeline
+# Text preprocessing
+# This has to match the notebook's preprocess_text exactly. If the live bot
+# cleaned text differently from training, it would see words the model never
+# learned and accuracy would quietly drop.
 # ---------------------------------------------------------------------------
 def preprocess_text(text):
-    """Lowercase, remove punctuation, tokenize, and lemmatize."""
+    """Lowercase, remove punctuation, tokenize, and lemmatize a message."""
     text = text.lower()
     text = text.translate(str.maketrans("", "", string.punctuation))
     text = re.sub(r"\s+", " ", text).strip()
@@ -49,13 +56,16 @@ def preprocess_text(text):
 
 
 # ---------------------------------------------------------------------------
-# Course knowledge (generic sample figures for the demo)
+# Program information
+# The fee amounts are sample figures for the demo, not official fees.
 # ---------------------------------------------------------------------------
 COURSE_FEES = {
     "computer science": {"tuition_per_unit": 1350, "laboratory": 4000, "misc": 3000, "classroom": 1000, "id_fee": 150},
     "information technology": {"tuition_per_unit": 1300, "laboratory": 3800, "misc": 3000, "classroom": 1000, "id_fee": 150},
     "information system": {"tuition_per_unit": 1250, "laboratory": 3200, "misc": 3000, "classroom": 1000, "id_fee": 150},
 }
+
+# Every way a student might name a program, mapped to its official name.
 COURSE_ALIASES = {
     "computer science": "computer science", "computerscience": "computer science",
     "compsci": "computer science", "comsci": "computer science", "cs": "computer science",
@@ -66,22 +76,28 @@ COURSE_ALIASES = {
 }
 STANDARD_LOAD_UNITS = 21
 
-# Keywords used only for typo-tolerant fuzzy matching (not exact matching).
+# Words we compare against when the student makes a typo (used by fuzzy matching only).
 COURSE_KEYWORDS = {
     "computer science": ["computer", "science"],
     "information technology": ["information", "technology"],
     "information system": ["information", "system"],
 }
 
+# After answering one of these topics, the bot asks "anything else?".
 FOLLOWUP_INTENTS = {"admission", "scholarship", "dormitory", "placement", "document", "document_request"}
+
+# Short yes/no replies, including common Filipino ones.
 YES_WORDS = {"yes", "yeah", "yep", "yup", "sure", "ok", "okay", "opo", "oo"}
 NO_SINGLE_WORDS = {"no", "nope", "nah", "wala", "hindi"}
 NO_PHRASES = {"no thanks", "im good", "i'm good"}
 
 
 def fuzzy_match_course(message):
-    """Catch minor typos (e.g. 'compute4r science') by comparing each word
-    against known course keywords by similarity instead of exact match."""
+    """Find a program name even when it is misspelled, e.g. "compute4r science".
+
+    Each word in the message is compared with the program keywords. Two words
+    count as a match when they are at least 80% similar.
+    """
     words = re.sub(r"[^a-z0-9\s]", " ", message.lower()).split()
     best_course, best_score = None, 0.0
     for course, keywords in COURSE_KEYWORDS.items():
@@ -96,15 +112,19 @@ def fuzzy_match_course(message):
 
 
 def match_course(message, relaxed=False):
-    """Return the canonical course name mentioned in `message`, or None.
+    """Return the program named in the message, or None if there isn't one.
 
-    Bare 2-letter codes ("cs", "it", "is") collide with English words, so:
-    relaxed=True  (message already classified as fees) -> trust them anywhere,
-    relaxed=False -> only when the code is the ENTIRE message ("IT").
+    The short codes "is" and "it" are also everyday English words. In an early
+    version, "where is the library" was read as the IS program. So the codes
+    only count when:
+      - the message is already about fees (relaxed=True), or
+      - the code is the whole message, like "IT", or
+      - it comes at the end after a word like "about" or "for", like "what about IT".
     """
     text = message.lower().strip()
     words = text.split()
 
+    # Full names and nicknames are safe to match anywhere in the message.
     for alias in sorted(COURSE_ALIASES, key=len, reverse=True):
         if len(alias) > 2 and re.search(rf"\b{re.escape(alias)}\b", text):
             return COURSE_ALIASES[alias]
@@ -116,16 +136,17 @@ def match_course(message, relaxed=False):
     else:
         if len(words) == 1 and words[0].strip(string.punctuation) in ("cs", "it", "is"):
             return COURSE_ALIASES[words[0].strip(string.punctuation)]
-        # Code at the END of a message, right after a cue word: "what about IT",
-        # "how about cs?", "I'm taking IS". "is scholarship available" does not match.
+        # Matches "what about IT" or "I'm taking IS", but not "is scholarship available".
         m = re.search(r"\b(?:about|for|in|of|taking|under|sa)\s+(cs|it|is)\s*[?.!]*$", text)
         if m:
             return COURSE_ALIASES[m.group(1)]
 
+    # Last resort: allow for typos.
     return fuzzy_match_course(message)
 
 
 def build_fee_breakdown(course):
+    """Build the fee reply for one program, computing the totals from COURSE_FEES."""
     fees = COURSE_FEES[course]
     tuition_total = fees["tuition_per_unit"] * STANDARD_LOAD_UNITS
     grand_total = tuition_total + fees["laboratory"] + fees["misc"] + fees["classroom"] + fees["id_fee"]
@@ -142,6 +163,8 @@ def build_fee_breakdown(course):
     )
 
 
+# The yes/no checks look at whole words in short replies only. An early version
+# searched inside words, so "technology" was read as a "no".
 def is_yes(text):
     words = re.findall(r"[a-z']+", text.lower())
     return len(words) <= 3 and any(w in YES_WORDS for w in words)
@@ -156,19 +179,22 @@ def is_no(text):
 
 
 # ---------------------------------------------------------------------------
-# Conversation state + the bot
+# Conversation memory and the bot itself
 # ---------------------------------------------------------------------------
 @dataclass
 class ConversationState:
-    """Everything the bot remembers about ONE user's conversation."""
-    last_topic: str = None
-    awaiting_followup: bool = False
+    """What the bot remembers about one user's conversation."""
+    last_topic: str = None            # e.g. "fees" while we are talking about fees
+    awaiting_followup: bool = False   # True right after the bot asks "anything else?"
     last_seen: float = field(default_factory=time.time)
 
 
 class AskCampusBot:
-    """Wraps the trained model + vectorizer + replies. Stateless itself:
-    pass a ConversationState into respond() for each user."""
+    """Holds the trained model, the vectorizer and the replies.
+
+    The bot keeps no memory of its own. Each call to respond() gets the
+    ConversationState of the user who sent the message.
+    """
 
     def __init__(self, model, vectorizer, response_bank, threshold=CONFIDENCE_THRESHOLD):
         self.model = model
@@ -177,14 +203,16 @@ class AskCampusBot:
         self.threshold = threshold
 
     def classify(self, message):
-        """Run the ML pipeline: preprocess -> TF-IDF -> calibrated LinearSVC."""
+        """Clean the message, turn it into TF-IDF features, and ask the model.
+        Returns the top intent and its probability."""
         features = self.vectorizer.transform([preprocess_text(message)])
         probs = self.model.predict_proba(features)[0]
         top_idx = int(np.argmax(probs))
         return self.model.classes_[top_idx], float(probs[top_idx])
 
     def respond(self, message, state):
-        """Return a dict: reply, intent, confidence, handled_by."""
+        """Answer one message. Returns the reply, the intent, the confidence,
+        and which part of the bot answered (shown under each reply)."""
         state.last_seen = time.time()
 
         def out(reply, intent, confidence, handled_by):
@@ -194,7 +222,7 @@ class AskCampusBot:
         if not message or not message.strip():
             return out(FALLBACK_RESPONSE, None, 0.0, "fallback")
 
-        # 1) Short yes/no reply to our own "anything else?" invite.
+        # Step 1: a yes/no answer to the bot's own "anything else?" question.
         if state.awaiting_followup:
             state.awaiting_followup = False
             if is_yes(message):
@@ -204,9 +232,9 @@ class AskCampusBot:
             if is_no(message):
                 return out("Glad I could help! Feel free to ask anytime.",
                            "followup_no", 1.0, "context (follow-up)")
-            # anything else is a fresh question -> fall through
+            # Anything else is treated as a new question.
 
-        # 2) Sticky fees context: a course named while we're still on fees.
+        # Step 2: we are still talking about fees and the student named a program.
         if state.last_topic == "fees":
             course = match_course(message)
             if course:
@@ -214,7 +242,7 @@ class AskCampusBot:
                 return out(build_fee_breakdown(course), "fees_detail", 1.0,
                            "context (fees) + course entity")
 
-        # 3) The ML model.
+        # Step 3: everything else goes to the machine learning model.
         intent, confidence = self.classify(message)
 
         if confidence < self.threshold:
@@ -227,12 +255,12 @@ class AskCampusBot:
         if intent == "fees":
             state.last_topic = "fees"
             course = match_course(message, relaxed=True)
-            if course:  # "what are the fees for computer science?"
+            if course:  # the program was named in the same message
                 state.awaiting_followup = True
                 return out(build_fee_breakdown(course), "fees_detail", confidence,
                            "model + course entity")
         else:
-            state.last_topic = intent  # a different, confident topic ends fees mode
+            state.last_topic = intent  # a new topic ends the fees conversation
 
         reply = random.choice(self.response_bank.get(intent) or [FALLBACK_RESPONSE])
         if intent in FOLLOWUP_INTENTS:
@@ -242,7 +270,7 @@ class AskCampusBot:
 
 
 def load_response_bank(intents_path):
-    """Build {intent: [responses]} from intents.json, skipping malformed entries."""
+    """Read the replies for each intent from intents.json, skipping broken entries."""
     import json
     with open(intents_path, "r", encoding="utf-8") as f:
         raw = json.load(f)
